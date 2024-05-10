@@ -1,0 +1,1 @@
+{'no stress': 0, 'interruption': 1, 'time pressure': 2}
