@@ -5,6 +5,8 @@ from pyspark.ml.classification import (
     LinearSVC,
     OneVsRest,
     NaiveBayes,
+    DecisionTreeClassifier,
+    MultilayerPerceptronClassifier
 )
 from pyspark.ml.evaluation import MulticlassClassificationEvaluator
 from pyspark.sql.functions import col, min, max, stddev, mean
@@ -15,16 +17,22 @@ TARGET_COL = "condition"
 FEATURES_COL = "features"
 
 
-def read_data(preprocess=None):
+def read_data(preprocess=None, data_preprocessed=False):
     # Create a Spark session
     spark = SparkSession.builder.appName("SVC").getOrCreate()
 
     # Read the data from the CSV file
     module_dir = os.path.dirname(__file__)
-    train_data_path = os.path.join(
-        module_dir, '../../dataset/train_combined.csv')
-    test_data_path = os.path.join(
-        module_dir, '../../dataset/test_combined.csv')
+    if data_preprocessed:
+        train_data_path = os.path.join(
+            module_dir, '../dataset/train_preprocessed.csv')
+        test_data_path = os.path.join(
+            module_dir, '../dataset/test_preprocessed.csv')
+    else:
+        train_data_path = os.path.join(
+            module_dir, '../dataset/train_combined.csv')
+        test_data_path = os.path.join(
+            module_dir, '../dataset/test_combined.csv')
 
     train_data = spark.read.csv(train_data_path, header=True, inferSchema=True)
     test_data = spark.read.csv(test_data_path, header=True, inferSchema=True)
@@ -159,26 +167,92 @@ def naive_model(train_data, test_data):
     return nb_model
 
 
+def decision_tree_model(train_data, test_data):
+
+    dt = DecisionTreeClassifier(labelCol=TARGET_COL, featuresCol=FEATURES_COL)
+
+    # Train the model using the training sets
+    dt_model = dt.fit(train_data)
+
+    # Make predictions on the training and test data
+    test_predictions = dt_model.transform(test_data)
+
+    # Evaluate the accuracy of the model on the training and test data
+    evaluator = MulticlassClassificationEvaluator(
+        metricName="accuracy", labelCol=TARGET_COL)
+    test_accuracy = evaluator.evaluate(test_predictions)
+
+    print(f"Test Accuracy: {test_accuracy}")
+
+    return dt_model
+
+
+def mlp_model(train_data, test_data):
+
+    # Create a Multi-Layer Perceptron model
+    layers = [train_data.select(
+        FEATURES_COL).head().features.size, 100, 100, 3]
+    mlp = MultilayerPerceptronClassifier(
+        layers=layers, featuresCol=FEATURES_COL, labelCol=TARGET_COL)
+
+    # Train the model using the training sets
+    mlp_model = mlp.fit(train_data)
+
+    # Make predictions on the training and test data
+    test_predictions = mlp_model.transform(test_data)
+
+    # evaluate the accuracy of the model on the training and test data
+    evaluator = MulticlassClassificationEvaluator(labelCol=TARGET_COL)
+    test_accuracy = evaluator.evaluate(test_predictions)
+
+    print(f"Test Accuracy: {test_accuracy}")
+
+
 def Grid_Search(train_data, test_data, model_type="lr"):
 
     # Create an SVM model
     model = None
+    paramGrid = None
+
     if model_type == "lr":
         model = LogisticRegression(
-            featuresCol=FEATURES_COL, labelCol=TARGET_COL)
+            featuresCol=FEATURES_COL, labelCol=TARGET_COL, family="multinomial")
+
+        paramGrid = ParamGridBuilder() \
+            .addGrid(model.elasticNetParam, [0, 0.5, 1]) \
+            .addGrid(model.maxIter, [10, 100]) \
+            .build()
+
     elif model_type == "lsvc":
         lsvc = LinearSVC()
         model = OneVsRest(classifier=lsvc, labelCol=TARGET_COL)
-    elif model_type == "nb":
-        model = NaiveBayes(featuresCol=FEATURES_COL, labelCol=TARGET_COL)
-    else:
-        raise ValueError("model_type should be either 'lr' or 'lsvc'")
 
-    # Create a parameter grid
-    paramGrid = ParamGridBuilder() \
-        .addGrid(model.regParam, [0.1, 0.01]) \
-        .addGrid(model.maxIter, [10, 100]) \
-        .build()
+        paramGrid = ParamGridBuilder() \
+            .addGrid(lsvc.regParam, [0.1, 0.01]) \
+            .addGrid(lsvc.maxIter, [10, 100]) \
+            .addGrid(lsvc.tol, [1e-3, 1e-4]) \
+            .build()
+
+    elif model_type == "nb":
+        model = NaiveBayes(featuresCol=FEATURES_COL,
+                           labelCol=TARGET_COL, modelType="multinomial")
+
+        paramGrid = ParamGridBuilder() \
+            .addGrid(model.smoothing, [0, 1, 2]) \
+            .build()
+
+    elif model_type == "dt":
+        model = DecisionTreeClassifier(
+            featuresCol=FEATURES_COL, labelCol=TARGET_COL)
+
+        paramGrid = ParamGridBuilder() \
+            .addGrid(model.maxDepth, [5, 10, 20]) \
+            .addGrid(model.maxBins, [32, 64, 128]) \
+            .build()
+
+    else:
+        raise ValueError(
+            "model_type should be either 'lr', 'lsvc', 'nb' or 'dt'")
 
     # Create a binary classification evaluator
     evaluator = MulticlassClassificationEvaluator(labelCol=TARGET_COL)
@@ -196,8 +270,20 @@ def Grid_Search(train_data, test_data, model_type="lr"):
     bestModel = cvModel.bestModel
 
     # Print the best hyperparameters
-    print(f"Best regParam: {bestModel._java_obj.getRegParam()}")
-    print(f"Best maxIter: {bestModel._java_obj.getMaxIter()}")
+    print("Best hyperparameters:")
+    if model_type == "lr":
+        print(f"elasticNetParam: {bestModel.getElasticNetParam()}")
+        print(f"maxIter: {bestModel.getMaxIter()}")
+    elif model_type == "lsvc":
+        print(f"regParam: {bestModel.getClassifier().getRegParam()}")
+        print(f"maxIter: {bestModel.getClassifier().getMaxIter()}")
+        print(f"tol: {bestModel.getClassifier().getTol()}")
+    elif model_type == "nb":
+        print(f"smoothing: {bestModel.getSmoothing()}")
+        print(f"modelType: {bestModel.getModelType()}")
+    elif model_type == "dt":
+        print(f"maxDepth: {bestModel.getMaxDepth()}")
+        print(f"maxBins: {bestModel.getMaxBins()}")
 
     # Make predictions on the training and test data
     train_predictions = bestModel.transform(train_data)
