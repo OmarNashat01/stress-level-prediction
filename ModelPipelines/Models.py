@@ -30,9 +30,9 @@ def read_data(preprocess=None, data_preprocessed=False):
             module_dir, '../dataset/test_preprocessed.csv')
     else:
         train_data_path = os.path.join(
-            module_dir, '../dataset/train_combined.csv')
+            module_dir, '../dataset/train_df.csv')
         test_data_path = os.path.join(
-            module_dir, '../dataset/test_combined.csv')
+            module_dir, '../dataset/test_df.csv')
 
     train_data = spark.read.csv(train_data_path, header=True, inferSchema=True)
     test_data = spark.read.csv(test_data_path, header=True, inferSchema=True)

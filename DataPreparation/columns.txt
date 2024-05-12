@@ -1,0 +1,1 @@
+['VLF', 'VLF_PCT', 'LF', 'LF_NU', 'HF', 'LF_HF', 'SD2', 'sampen', 'higuci', 'condition', 'MEAN_RR', 'pNN50', 'KURT', 'SKEW', 'MEAN_REL_RR', 'MEDIAN_REL_RR', 'SDRR_REL_RR', 'SDRR_RMSSD_REL_RR']
